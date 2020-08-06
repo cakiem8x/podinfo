@@ -1,0 +1,14 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: el-getting-started-listener-virtual-service
+  namespace: getting-started
+spec:
+  gateways:
+    - el-getting-started-listener-gateway
+  hosts:
+    - 'getting-started.cunpolo.fun'
+  http:
+    - route:
+        - destination:
+            host: el-getting-started-listener

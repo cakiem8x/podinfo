@@ -1,0 +1,16 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: el-getting-started-listener
+  namespace: getting-started
+  annotations:
+    kubernetes.io/ingress.class: "istio"
+spec:
+  rules:
+  - host: getting-started.cunpolo.fun
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: el-getting-started-listener
+          servicePort: 8080

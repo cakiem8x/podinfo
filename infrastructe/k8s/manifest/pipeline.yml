@@ -1,0 +1,143 @@
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: build-docker-image-from-git-task
+  namespace: getting-started
+spec:
+  inputs:
+    resources:
+      - name: docker-source
+        type: git
+    params:
+      - name: pathToDockerFile
+        description: The path to the dockerfile to build
+        default: /workspace/docker-source/Dockerfile
+      - name: pathToContext
+        description: The build context used by Kaniko
+          (https://github.com/GoogleContainerTools/kaniko#kaniko-build-contexts)
+        default: /workspace/docker-source
+  outputs:
+    resources:
+      - name: image-source
+        type: image
+  volumes:
+    - name: docker-config
+      secret:
+        secretName: harbor-docker-config
+        items:
+          - key: .dockerconfigjson
+            path: config.json
+    - name: shared-storage
+      emptyDir: {}
+  steps:
+    - name: build
+      image: gcr.io/kaniko-project/executor
+      env:
+        - name: 'DOCKER_CONFIG'
+          value: '/builder/home/.docker/'
+      command:
+        - /kaniko/executor
+      args:
+        - --dockerfile=$(inputs.params.pathToDockerFile)
+        - --destination=$(outputs.resources.image-source.url)
+        - --context=$(inputs.params.pathToContext)
+        - --skip-tls-verify
+      volumeMounts:
+        - name: docker-config
+          mountPath: /builder/home/.docker/
+---
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: deploy-locally
+  namespace: getting-started
+spec:
+  inputs:
+    resources:
+      - name: image-source
+        type: image
+  outputs:
+    resources:
+      - name: event-to-sink
+        type: cloudEvent
+  steps:
+    - name: run-kubectl
+      image: lachlanevenson/k8s-kubectl:latest
+      command:
+        - sh
+      args:
+        - -ce
+        - |
+          set -ex 
+          kubectl run podinfo --overrides='{"apiVersion":"v1","spec":{"imagePullSecrets":[{"name":"harbor-docker-config"}]}}' --image $(inputs.resources.image-source.url) -o yaml --dry-run=client | kubectl apply -f -
+---
+apiVersion: tekton.dev/v1alpha1
+kind: Pipeline
+metadata:
+  name: getting-started-pipeline
+  namespace: getting-started
+spec:
+  resources:
+    - name: docker-source
+      type: git
+    - name: image-source
+      type: image
+    - name: event-to-sink
+      type: cloudEvent
+  tasks:
+    - name: build-docker-image-from-git-task-run
+      taskRef:
+        name: build-docker-image-from-git-task
+      params:
+        - name: pathToDockerFile
+          value: Dockerfile
+        - name: pathToContext
+          value: /workspace/docker-source/
+      resources:
+        inputs:
+          - name: docker-source
+            resource: docker-source
+        outputs:
+          - name: image-source
+            resource: image-source
+    - name: deploy-locally
+      taskRef:
+        name: deploy-locally
+      resources:
+        inputs:
+          - name: image-source
+            resource: image-source
+            from:
+              - build-docker-image-from-git-task-run
+        outputs:
+          - name: event-to-sink
+            resource: event-to-sink
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: event-display
+  namespace: getting-started
+  labels:
+    app: event-display
+spec:
+  type: ClusterIP
+  ports:
+    - name: listener
+      port: 8080
+      protocol: TCP
+  selector:
+    app: event-display
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: event-display
+  namespace: getting-started
+  labels:
+    name: event-display
+spec:
+  hostname: event-display
+  containers:
+    - image: gcr.io/knative-releases/github.com/knative/eventing-sources/cmd/event_display
+      name: web

@@ -1,0 +1,62 @@
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: create-istio-gateway-virtualservice
+  namespace: getting-started
+spec:
+  volumes:
+  - name: work
+    emptyDir: {}
+
+  inputs:
+    params:
+    - name: TLScredentialName
+      description: "Specify the secret with wildcard certificate"
+    - name: ExternalDomain
+      description: "The external domain for the EventListener"
+    - name: Service
+      description: "The name of the Service used in the VirtualService"
+    - name: ServicePort
+      description: "The service port that the VirtualService is being created on"
+
+  steps:
+  - name: create-istio-gateway-virtualservice
+    image: lachlanevenson/k8s-kubectl:latest
+    command:
+    - sh
+    args:
+    - -ce
+    - |
+      set -ex
+      cat << EOF | kubectl create -f -
+      apiVersion: networking.istio.io/v1alpha3
+      kind: Gateway
+      metadata:
+        name: $(inputs.params.Service)-gateway
+      spec:
+        selector:
+          istio: ingressgateway
+        servers:
+        - port:
+            number: 80
+            name: https-$(inputs.params.Service)
+            protocol: HTTP
+          hosts:
+          - $(inputs.params.ExternalDomain)
+      ---
+      apiVersion: networking.istio.io/v1alpha3
+      kind: VirtualService
+      metadata:
+        name: $(inputs.params.Service)-virtual-service
+      spec:
+        hosts:
+        - $(inputs.params.ExternalDomain)
+        gateways:
+        - $(inputs.params.Service)-gateway
+        http:
+        - route:
+          - destination:
+              host: $(inputs.params.Service)
+              port:
+                number: $(inputs.params.ServicePort)
+      EOF
